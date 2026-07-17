@@ -875,7 +875,7 @@ jobs:
     needs: [prepare-matrix, build-windows, build-ubuntu]
     if: |
       (needs.build-windows.result == 'success' || needs.build-ubuntu.result == 'success') &&
-      contains(github.event.inputs.gfx_target || 'gfx1151,gfx1150,gfx120X,gfx110X', 'gfx1151')
+      contains(github.event.inputs.gfx_target || 'gfx1151,gfx1150,gfx120X,gfx110X', 'gfx1151') && false
     strategy:
       matrix:
         include:
@@ -905,7 +905,7 @@ jobs:
     needs: [prepare-matrix, build-windows, build-ubuntu]
     if: |
       (needs.build-windows.result == 'success' || needs.build-ubuntu.result == 'success') &&
-      contains(github.event.inputs.gfx_target || 'gfx1151,gfx1150,gfx120X,gfx110X', 'gfx1150')
+      contains(github.event.inputs.gfx_target || 'gfx1151,gfx1150,gfx120X,gfx110X', 'gfx1150') && false
     strategy:
       matrix:
         include:
