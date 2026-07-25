@@ -24,7 +24,7 @@ on:
           - official
           - cachy
           - custom
-      llamacpp_repository:
+      LLAMACPP_REPO:
         description: 'llama.cpp git repository URL (ignored unless llamacpp_type = custom)'
         required: false
         #default: 'https://github.com/ggerganov/llama.cpp.git'
@@ -53,7 +53,7 @@ env:
   GFX_TARGETS: ${{ github.event.inputs.gfx_target || 'gfx1151,gfx1150,gfx120X,gfx110X,gfx103X,gfx90a,gfx908' }}
   ROCM_VERSION: ${{ github.event.inputs.rocm_version || 'latest' }}
   LLAMACPP_VERSION: ${{ github.event.inputs.llamacpp_version || 'latest' }}
-  LLAMACPP_REPO: ${{ github.event.inputs.llamacpp_type == 'cachy' && 'https://github.com/fewtarius/CachyLLama.git' || github.event.inputs.llamacpp_type == 'custom' && github.event.inputs.llamacpp_repository || 'https://github.com/ggerganov/llama.cpp.git' }}
+  LLAMACPP_REPO: ${{ github.event.inputs.llamacpp_type == 'cachy' && 'https://github.com/fewtarius/CachyLLama.git' || github.event.inputs.llamacpp_type == 'custom' && github.event.inputs.LLAMACPP_REPO || 'https://github.com/ggerganov/llama.cpp.git' }}
   
 jobs:
   prepare-matrix:
@@ -265,7 +265,7 @@ jobs:
     - name: Clone llama.cpp
       run: |
         $llamacppVersion = "${{ env.LLAMACPP_VERSION }}"
-        $llamacppRepository = "${{ env.LLAMACPP_REPOSITORY }}"
+        $llamacppRepository = "${{ env.LLAMACPP_REPO }}"
         if ($llamacppVersion -eq "latest") {
           Write-Host "Cloning master branch (latest) with shallow clone"
           git clone --depth 1 --single-branch --branch master $llamacppRepository llama.cpp
@@ -657,7 +657,7 @@ jobs:
     - name: Clone llama.cpp
       run: |
         llamacpp_version="${{ env.LLAMACPP_VERSION }}"
-        llamacppRepository = "${{ env.LLAMACPP_REPOSITORY }}"
+        llamacppRepository = "${{ env.LLAMACPP_REPO }}"
         if [ "$llamacpp_version" = "latest" ]; then
           echo "Cloning master branch (latest) with shallow clone"
           git clone --depth 1 --single-branch --branch master "$llamacppRepository" llama.cpp
