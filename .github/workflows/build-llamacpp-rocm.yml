@@ -25,7 +25,7 @@ on:
           - cachy
           - custom
       llamacpp_repository:
-        description: 'llama.cpp git repository URL (default: upstream cachyllama)'
+        description: 'llama.cpp git repository URL (ignored unless llamacpp_type = custom)'
         required: false
         #default: 'https://github.com/ggerganov/llama.cpp.git'
       llamacpp_version:
