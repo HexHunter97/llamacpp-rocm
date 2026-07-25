@@ -284,6 +284,28 @@ jobs:
         # Show current commit info
         Write-Host "Current llama.cpp commit:"
         git log --oneline -1
+        
+        - name: Patch CachyLLama for Windows compatibility
+          if: github.event.inputs.llamacpp_type == 'cachy'
+          run: |
+            Write-Host "Applying CachyLLama Windows compatibility patches..."
+            $coact = "llama.cpp\src\llama-moe-coact.cpp"
+            if (Test-Path $coact) {
+              $c = Get-Content $coact -Raw
+        
+              # 1. Add Windows includes after sys/stat.h
+              $c = $c -replace '(#include <sys/stat.h>)', '$1`r`n#ifdef _WIN32`r`n#include <direct.h>`r`n#define mkdir(p, m) _mkdir(p)`r`n#endif'
+        
+              # 2. Replace HOME + /tmp fallback with cross-platform temp path
+              $c = $c -replace 
+                '    const char \* home = std::getenv\("HOME"\);`r?n    if \(!home \|\| \*home\) home = "/tmp";',
+                '#ifdef _WIN32`r`n    const char * home = getenv("TEMP");`r`n    if (!home || !*home) { const char * up = getenv("USERPROFILE"); home = up && *up ? up : "."; }`r`n#else`r`n    const char * home = std::getenv("HOME");`r`n    if (!home || !*home) home = "/tmp";`r`n#endif'
+        
+              Set-Content $coact -Value $c -NoNewline
+              Write-Host "Patched llama-moe-coact.cpp successfully."
+            } else {
+              Write-Host "llama-moe-coact.cpp not found — skipping patch."
+            }
 
     - name: Build Llama.cpp + ROCm
       shell: cmd
