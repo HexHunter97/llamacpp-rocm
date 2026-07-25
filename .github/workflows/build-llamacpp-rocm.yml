@@ -459,6 +459,7 @@ jobs:
         ## Build Configuration
         - **GPU Target**: ${{ matrix.gfx_target }}
         - **ROCm Version**: ${{ env.DETECTED_ROCM_VERSION || env.ROCM_VERSION }}
+        - **llama.cpp Repository**: ${{ env.LLAMACPP_REPO }}  
         - **llama.cpp Commit Hash**: ${{ env.LLAMACPP_COMMIT_HASH }}
         - **Build Type**: Release
         - **Platform**: Windows
@@ -841,6 +842,7 @@ jobs:
         ## Build Configuration
         - **GPU Target**: ${{ matrix.gfx_target }}
         - **ROCm Version**: ${{ env.DETECTED_ROCM_VERSION || env.ROCM_VERSION }}
+        - **llama.cpp Repository**: ${{ env.LLAMACPP_REPO }}  
         - **llama.cpp Commit Hash**: ${{ env.LLAMACPP_COMMIT_HASH }}
         - **Build Type**: Release
         - **Platform**: Ubuntu
@@ -1065,6 +1067,7 @@ jobs:
         TAG="${{ steps.generate-tag.outputs.tag }}"
         # Get ROCm version from either Windows or Ubuntu build (whichever succeeded)
         ROCM_VERSION="${{ needs.build-windows.outputs.rocm_version || needs.build-ubuntu.outputs.rocm_version }}"
+        LLLAMACPP_REPO="${{ env.LLAMACPP_REPO }}"
         # Get llama.cpp commit hash from either Windows or Ubuntu build (whichever succeeded)
         LLAMACPP_COMMIT_HASH="${{ needs.build-windows.outputs.llamacpp_commit_hash || needs.build-ubuntu.outputs.llamacpp_commit_hash }}"
         targets="${{ env.GFX_TARGETS }}"
@@ -1074,6 +1077,7 @@ jobs:
         echo "GPU Targets: $targets"
         echo "Operating Systems: $operating_systems"
         echo "ROCm Version: $ROCM_VERSION"
+        echo "Llama.cpp Repository: $LLLAMACPP_REPO
         echo "Llama.cpp Commit: $LLAMACPP_COMMIT_HASH"
         
         # Verify archives exist
@@ -1105,6 +1109,7 @@ jobs:
         **Operating System(s)**: $operating_systems
         **GPU Target(s)**: $targets
         **ROCm Version**: $ROCM_VERSION
+        **Llama.cpp Repository**: $LLLAMACPP_REPO
         **Llama.cpp Commit Hash**: $LLAMACPP_COMMIT_HASH
         **Build Date**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
 
