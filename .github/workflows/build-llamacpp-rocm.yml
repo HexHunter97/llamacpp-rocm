@@ -15,6 +15,11 @@ on:
         description: 'ROCm version to use (e.g., 7.13.0a20260318) or "latest" to auto-detect'
         required: false
         default: 'latest'
+      llamacpp_repository:
+        description: 'llama.cpp git repository URL (default: upstream cachyllama)'
+        required: false
+        default: 'https://github.com/fewtarius/CachyLLama.git'
+        #default: 'https://github.com/ggerganov/llama.cpp.git'
       llamacpp_version:
         description: 'Llama.cpp version (e.g., tag, branch, or commit hash) or "latest" for master branch'
         required: false
@@ -40,6 +45,7 @@ env:
   GFX_TARGETS: ${{ github.event.inputs.gfx_target || 'gfx1151,gfx1150,gfx120X,gfx110X,gfx103X,gfx90a,gfx908' }}
   ROCM_VERSION: ${{ github.event.inputs.rocm_version || 'latest' }}
   LLAMACPP_VERSION: ${{ github.event.inputs.llamacpp_version || 'latest' }}
+  LLAMACPP_REPOSITORY: ${{ github.event.inputs.llamacpp_repository || 'https://github.com/ggerganov/llama.cpp.git' }}
 
 jobs:
   prepare-matrix:
@@ -251,14 +257,16 @@ jobs:
     - name: Clone llama.cpp
       run: |
         $llamacppVersion = "${{ env.LLAMACPP_VERSION }}"
+        $llamacppRepository = "${{ env.LLAMACPP_REPOSITORY }}"
         if ($llamacppVersion -eq "latest") {
           Write-Host "Cloning master branch (latest) with shallow clone"
-          git clone --depth 1 --single-branch --branch master https://github.com/ggerganov/llama.cpp.git
+          git clone --depth 1 --single-branch --branch master $llamacppRepository
         } else {
           Write-Host "Cloning llama.cpp version: $llamacppVersion with shallow clone"
-          git clone --depth 1 --single-branch --branch $llamacppVersion https://github.com/ggerganov/llama.cpp.git
+          git clone --depth 1 --single-branch --branch $llamacppVersion $llamacppRepository
         }
         cd llama.cpp
+        git submodule update --init --recursive
         
         # Get commit hash (5 digits) and store it as environment variable
         $commitHash = git rev-parse --short=5 HEAD
@@ -640,14 +648,16 @@ jobs:
     - name: Clone llama.cpp
       run: |
         llamacpp_version="${{ env.LLAMACPP_VERSION }}"
+        llamacppRepository = "${{ env.LLAMACPP_REPOSITORY }}"
         if [ "$llamacpp_version" = "latest" ]; then
           echo "Cloning master branch (latest) with shallow clone"
-          git clone --depth 1 --single-branch --branch master https://github.com/ggerganov/llama.cpp.git
+          git clone --depth 1 --single-branch --branch master "$llamacppRepository"
         else
           echo "Cloning llama.cpp version: $llamacpp_version with shallow clone"
-          git clone --depth 1 --single-branch --branch "$llamacpp_version" https://github.com/ggerganov/llama.cpp.git
+          git clone --depth 1 --single-branch --branch "$llamacpp_version" "$llamacppRepository"
         fi
         cd llama.cpp
+        git submodule update --init --recursive
         
         # Get commit hash (5 digits) and store it as environment variable
         commit_hash=$(git rev-parse --short=5 HEAD)
