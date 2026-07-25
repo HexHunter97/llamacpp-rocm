@@ -302,7 +302,6 @@ jobs:
       
               $out.Add('#ifdef _WIN32')
               $out.Add('#include <direct.h>')
-              $out.Add('#include <windows.h>')
               $out.Add('#endif')
             }
       
