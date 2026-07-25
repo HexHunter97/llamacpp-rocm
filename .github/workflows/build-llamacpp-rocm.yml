@@ -15,10 +15,18 @@ on:
         description: 'ROCm version to use (e.g., 7.13.0a20260318) or "latest" to auto-detect'
         required: false
         default: 'latest'
+      llamacpp_type:
+        description: 'llama.cpp variant'
+        required: false
+        default: 'official'
+        type: choice
+        options:
+          - official
+          - cachy
+          - custom
       llamacpp_repository:
         description: 'llama.cpp git repository URL (default: upstream cachyllama)'
         required: false
-        default: 'https://github.com/fewtarius/CachyLLama.git'
         #default: 'https://github.com/ggerganov/llama.cpp.git'
       llamacpp_version:
         description: 'Llama.cpp version (e.g., tag, branch, or commit hash) or "latest" for master branch'
@@ -45,8 +53,8 @@ env:
   GFX_TARGETS: ${{ github.event.inputs.gfx_target || 'gfx1151,gfx1150,gfx120X,gfx110X,gfx103X,gfx90a,gfx908' }}
   ROCM_VERSION: ${{ github.event.inputs.rocm_version || 'latest' }}
   LLAMACPP_VERSION: ${{ github.event.inputs.llamacpp_version || 'latest' }}
-  LLAMACPP_REPOSITORY: ${{ github.event.inputs.llamacpp_repository || 'https://github.com/ggerganov/llama.cpp.git' }}
-
+  LLAMACPP_REPO: ${{ github.event.inputs.llamacpp_type == 'cachy' && 'https://github.com/fewtarius/CachyLLama.git' || github.event.inputs.llamacpp_type == 'custom' && github.event.inputs.llamacpp_repository || 'https://github.com/ggerganov/llama.cpp.git' }}
+  
 jobs:
   prepare-matrix:
     runs-on: ubuntu-22.04
@@ -260,10 +268,10 @@ jobs:
         $llamacppRepository = "${{ env.LLAMACPP_REPOSITORY }}"
         if ($llamacppVersion -eq "latest") {
           Write-Host "Cloning master branch (latest) with shallow clone"
-          git clone --depth 1 --single-branch --branch master $llamacppRepository
+          git clone --depth 1 --single-branch --branch master $llamacppRepository llama.cpp
         } else {
           Write-Host "Cloning llama.cpp version: $llamacppVersion with shallow clone"
-          git clone --depth 1 --single-branch --branch $llamacppVersion $llamacppRepository
+          git clone --depth 1 --single-branch --branch $llamacppVersion $llamacppRepository llama.cpp
         }
         cd llama.cpp
         git submodule update --init --recursive
@@ -651,10 +659,10 @@ jobs:
         llamacppRepository = "${{ env.LLAMACPP_REPOSITORY }}"
         if [ "$llamacpp_version" = "latest" ]; then
           echo "Cloning master branch (latest) with shallow clone"
-          git clone --depth 1 --single-branch --branch master "$llamacppRepository"
+          git clone --depth 1 --single-branch --branch master "$llamacppRepository" llama.cpp
         else
           echo "Cloning llama.cpp version: $llamacpp_version with shallow clone"
-          git clone --depth 1 --single-branch --branch "$llamacpp_version" "$llamacppRepository"
+          git clone --depth 1 --single-branch --branch "$llamacpp_version" "$llamacppRepository" llama.cpp
         fi
         cd llama.cpp
         git submodule update --init --recursive
