@@ -287,38 +287,35 @@ jobs:
         
     - name: Patch CachyLLama for Windows compatibility
       if: github.event.inputs.llamacpp_type == 'cachy'
+      shell: pwsh
       run: |
-        Write-Host "Applying CachyLLama Windows compatibility patches..."
-        $coact = "llama.cpp\src\llama-moe-coact.cpp"
+        $ErrorActionPreference = 'Stop'
+        $root = "llama.cpp"
+        $fail = $false
+        $utf8 = New-Object System.Text.UTF8Encoding($false)
+        function Save-Text($path, $text) { [System.IO.File]::WriteAllText($path, $text, $utf8) }
+        function Show-Diff($rel) {
+          Write-Error "=== Diff: $rel ==="
+          Push-Location $root; git diff -- $rel; Pop-Location
+          Write-Error "=== End diff ==="
+        }
+
+        # ---------------- 1. llama-moe-coact.cpp (mkdir / HOME) ----------------
+        $coact = Join-Path $root "src\llama-moe-coact.cpp"
         if (Test-Path $coact) {
           $lines = Get-Content $coact
-          $out = New-Object System.Collections.Generic.List[System.String]
+          $out = New-Object System.Collections.Generic.List[string]
           for ($i = 0; $i -lt $lines.Count; $i++) {
             $line = $lines[$i]
             $out.Add($line)
-      
-            # After #include <sys/stat.h>, inject Windows compat
             if ($line -match '#include\s+<sys/stat\.h>') {
-      
-              $out.Add('#ifdef _WIN32')
-              $out.Add('#include <direct.h>')
-              $out.Add('#endif')
+              $out.Add('#ifdef _WIN32'); $out.Add('#include <direct.h>'); $out.Add('#endif')
             }
-      
-            # Replace mkdir(path, mode) → Windows-safe
             if ($line -match '^\s+mkdir\s*\(\s*dir\.c_str\(\)\s*,\s*0755\s*\)\s*;') {
-              # Remove the just-added line, replace with cross-platform
               $out.RemoveAt($out.Count - 1)
-      
-      
-              $out.Add('#ifdef _WIN32')
-              $out.Add('    _mkdir(dir.c_str());')
-              $out.Add('#else')
-              $out.Add('    mkdir(dir.c_str(), 0755);')
-              $out.Add('#endif')
+              $out.Add('#ifdef _WIN32'); $out.Add('    _mkdir(dir.c_str());')
+              $out.Add('#else');         $out.Add('    mkdir(dir.c_str(), 0755);'); $out.Add('#endif')
             }
-      
-            # Replace HOME + /tmp fallback
             if ($line -match 'std::getenv\("HOME"\)') {
               $out.RemoveAt($out.Count - 1)
               $out.Add('#ifdef _WIN32')
@@ -328,41 +325,103 @@ jobs:
               $out.Add('    const char * home = std::getenv("HOME");')
               $out.Add('#endif')
             }
-      
-            # Remove the old /tmp fallback (now inside #else block, add it there)
             if ($line -match 'home = "/tmp"') {
               $out.RemoveAt($out.Count - 1)
               $out.Add('    if (!home || !*home) home = "/tmp";')
             }
           }
-          $out | Set-Content $coact
-          Write-Host "Patched llama-moe-coact.cpp successfully."
+          Save-Text $coact (($out -join "`n") + "`n")
+          $p = Get-Content $coact -Raw
+          if ($p -notmatch '_mkdir') { Write-Error "coact: _mkdir missing"; Show-Diff "src/llama-moe-coact.cpp"; $fail = $true }
+          if ($p -match 'std::getenv\("HOME"\)' -and $p -notmatch '#ifdef _WIN32') { Write-Error "coact: HOME not guarded"; Show-Diff "src/llama-moe-coact.cpp"; $fail = $true }
+          if (-not $fail) { Write-Host "coact patched." }
+        } else { Write-Host "coact not found — skipping." }
 
-          # Verify patch applied — fail hard if not
-          $patched = Get-Content $coact -Raw
-          $failed = $false
-          if (-not ($patched -match '_mkdir')) {
-            Write-Error "PATCH VERIFICATION FAILED: _mkdir not found in llama-moe-coact.cpp!"
-            $failed = $true
+        # ------------- 2. llama-moe-residency.cpp (mman / madvise / getpagesize) -------------
+        $res = Join-Path $root "src\llama-moe-residency.cpp"
+        if (Test-Path $res) {
+          $raw = [System.IO.File]::ReadAllText($res)
+          if ($raw.Contains('Windows compat shim (injected by CI)')) {
+            Write-Host "residency already patched — skipping."
+          } else {
+            $shim = @(
+              '#ifdef _WIN32',
+              '// --- Windows compat shim (injected by CI) ---',
+              '#  ifndef NOMINMAX',
+              '#    define NOMINMAX',
+              '#  endif',
+              '#  ifndef WIN32_LEAN_AND_MEAN',
+              '#    define WIN32_LEAN_AND_MEAN',
+              '#  endif',
+              '#  include <windows.h>',
+              'static inline int getpagesize() {',
+              '    SYSTEM_INFO si;',
+              '    GetSystemInfo(&si);',
+              '    return (int) si.dwPageSize;',
+              '}',
+              '#  ifndef MADV_DONTNEED',
+              '#    define MADV_DONTNEED 0',
+              '#  endif',
+              '#  ifndef MADV_WILLNEED',
+              '#    define MADV_WILLNEED 0',
+              '#  endif',
+              'static inline int madvise(void *, size_t, int) { return 0; }',
+              '#else',
+              '#  include <sys/mman.h>',
+              '#  include <unistd.h>',
+              '#endif'
+            ) -join "`n"
+            $pattern = '#include <sys/mman\.h>\r?\n#include <unistd\.h>'
+            $count = [regex]::Matches($raw, $pattern).Count
+            if ($count -ne 1) {
+              Write-Error "residency: expected 1 include block, found $count"; Show-Diff "src/llama-moe-residency.cpp"; $fail = $true
+            } else {
+              $new = [regex]::Replace($raw, $pattern, { param($m) $shim }, 1)
+              Save-Text $res $new
+              Write-Host "residency patched."
+            }
           }
-          if ($patched -match 'std::getenv\("HOME"\)' -and -not ($patched -match '#ifdef _WIN32')) {
-            Write-Error "PATCH VERIFICATION FAILED: HOME getenv not wrapped in #ifdef _WIN32!"
-            $failed = $true
-          }
-          if ($failed) {
-            Write-Error "=== Diff of patched file ==="
-            Push-Location
-            Set-Location llama.cpp
-            git diff -- src/llama-moe-coact.cpp
-            Pop-Location
-            Write-Error "=== End diff ==="
-            exit 1
-          }
-          Write-Host "Patch verification passed."
-        } else {
-          Write-Host "llama-moe-coact.cpp not found — skipping patch."
-        }
+          $p = [System.IO.File]::ReadAllText($res)
+          if ($p -notmatch 'static inline int madvise') { Write-Error "residency: madvise stub missing"; Show-Diff "src/llama-moe-residency.cpp"; $fail = $true }
+          if ($p -match '(?m)^#include <sys/mman\.h>$')   { Write-Error "residency: bare mman include still unguarded"; Show-Diff "src/llama-moe-residency.cpp"; $fail = $true }
+        } else { Write-Host "residency not found — skipping." }
 
+        # --------- 3. common/kv_page_manager.cpp (unistd / mkdir) — defensive, not currently built ---------
+        $kv = Join-Path $root "common\kv_page_manager.cpp"
+        if (Test-Path $kv) {
+          $raw = [System.IO.File]::ReadAllText($kv)
+          if ($raw.Contains('kv_page_manager Windows shim (injected by CI)')) {
+            Write-Host "kv_page_manager already patched — skipping."
+          } else {
+            # Guard the unistd include (provide <direct.h> for _mkdir on Windows)
+            $incShim = @(
+              '#ifdef _WIN32',
+              '// --- kv_page_manager Windows shim (injected by CI) ---',
+              '#  include <direct.h>',
+              '#else',
+              '#  include <unistd.h>',
+              '#endif'
+            ) -join "`n"
+            $raw = [regex]::Replace($raw, '#include <unistd\.h>', { param($m) $incShim }, 1)
+            # Cross-platform mkdir
+            $mkdirShim = @(
+              '#ifdef _WIN32',
+              '    _mkdir(ssd_path);',
+              '#else',
+              '    mkdir(ssd_path, 0755);',
+              '#endif'
+            ) -join "`n"
+            $raw = [regex]::Replace($raw, '(?m)^\s*mkdir\(ssd_path, 0755\);', { param($m) $mkdirShim }, 1)
+            Save-Text $kv $raw
+            Write-Host "kv_page_manager patched (defensive)."
+          }
+          $p = [System.IO.File]::ReadAllText($kv)
+          if ($p -match '(?m)^#include <unistd\.h>$') { Write-Error "kv_page_manager: bare unistd include still unguarded"; Show-Diff "common/kv_page_manager.cpp"; $fail = $true }
+        } else { Write-Host "kv_page_manager not found — skipping (expected; not in build)." }
+
+        if ($fail) { Write-Error "One or more CachyLLama patches failed verification."; exit 1 }
+        Write-Host "All CachyLLama Windows patches applied and verified."
+        
     - name: Build Llama.cpp + ROCm
       shell: cmd
       run: |
