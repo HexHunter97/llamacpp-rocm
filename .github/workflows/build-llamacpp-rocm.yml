@@ -1214,7 +1214,7 @@ jobs:
         echo "GPU Targets: $targets"
         echo "Operating Systems: $operating_systems"
         echo "ROCm Version: $ROCM_VERSION"
-        echo "Llama.cpp Repository: $LLLAMACPP_REPO
+        echo "Llama.cpp Repository: $LLLAMACPP_REPO"
         echo "Llama.cpp Commit: $LLAMACPP_COMMIT_HASH"
         
         # Verify archives exist
