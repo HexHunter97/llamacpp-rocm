@@ -485,78 +485,137 @@ jobs:
         cmake --build . -j %NUMBER_OF_PROCESSORS%
         
     - name: Copy ROCm core DLLs to build directory
+      shell: pwsh
       run: |
-        $rocmVersion = if ($env:DETECTED_ROCM_VERSION) { $env:DETECTED_ROCM_VERSION } else { $env:ROCM_VERSION }
+        # Native command exit codes must not abort this script (llvm-objdump
+        # returns non-zero on files it cannot parse, which is expected).
+        $PSNativeCommandUseErrorActionPreference = $false
+
+        $rocmVersion  = if ($env:DETECTED_ROCM_VERSION) { $env:DETECTED_ROCM_VERSION } else { $env:ROCM_VERSION }
         $buildBinPath = "llama.cpp\build\bin"
-        $rocmBinPath = "C:\opt\rocm\bin"
-        
+        $rocmBinPath  = "C:\opt\rocm\bin"
+        $objdump      = "C:\opt\rocm\lib\llvm\bin\llvm-objdump.exe"
+
         Write-Host "Copying ROCm core DLL files to build directory..."
+        Write-Host "ROCm version: $rocmVersion"
         Write-Host "Source: $rocmBinPath"
         Write-Host "Destination: $buildBinPath"
-        
-        if (Test-Path $rocmBinPath) {
-          # Copy files matching patterns and specific names
-          $filesToCopy = @(
-            "amdhip64_*.dll",
-            "rocm_kpack.dll",
-            "amd_comgr*.dll", 
-            "libhipblas.dll",
-            "rocblas.dll",
-            "rocsolver.dll",
-            "hipblaslt.dll",
-            "libhipblaslt.dll",
-            "hipblas.dll"
-          )
-          
-          foreach ($pattern in $filesToCopy) {
-            $matchingFiles = Get-ChildItem -Path $rocmBinPath -Name $pattern -ErrorAction SilentlyContinue
-            if ($matchingFiles) {
-              foreach ($file in $matchingFiles) {
-                $sourcePath = Join-Path $rocmBinPath $file
-                $destPath = Join-Path $buildBinPath $file
-                Copy-Item $sourcePath $destPath
-                Write-Host "Copied: $file"
-              }
-            } else {
-              Write-Host "Warning: No files found matching pattern: $pattern"
-            }
-          }
-          
-          # Copy the rocblas\library folder and all its contents
-          $rocblasLibPath = Join-Path $rocmBinPath "rocblas\library"
-          if (Test-Path $rocblasLibPath) {
-            Write-Host "Copying rocblas\library folder and all contents..."
-            $destRocblasPath = Join-Path $buildBinPath "rocblas\library"
-            Copy-Item -Path $rocblasLibPath -Destination $destRocblasPath -Recurse -Force
-            Write-Host "Copied: rocblas\library folder with all contents"
-            
-            # List the contents of the copied rocblas\library folder
-            Write-Host "Contents of rocblas\library:"
-            Get-ChildItem $destRocblasPath -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
-          } else {
-            Write-Host "Warning: rocblas\library folder not found at: $rocblasLibPath"
-          }
 
-          # Copy the hipblaslt\library folder and all its contents
-          $hipblasltLibPath = Join-Path $rocmBinPath "hipblaslt\library"
-          if (Test-Path $hipblasltLibPath) {
-            Write-Host "Copying hipblaslt\library folder and all contents..."
-            $destHipblasltPath = Join-Path $buildBinPath "hipblaslt\library"
-            Copy-Item -Path $hipblasltLibPath -Destination $destHipblasltPath -Recurse -Force
-            Write-Host "Copied: hipblaslt\library folder with all contents"
-
-            # List the contents of the copied hipblaslt\library folder
-            Write-Host "Contents of hipblaslt\library:"
-            Get-ChildItem $destHipblasltPath -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
-          } else {
-            Write-Host "Warning: rocblas\library folder not found at: $rocblasLibPath"
-          }
-          
-          Write-Host "ROCm core files successfully copied to build directory"
-        } else {
+        if (-not (Test-Path $rocmBinPath)) {
           Write-Error "ROCm bin directory not found: $rocmBinPath"
           exit 1
         }
+
+        # ---------------------------------------------------------------
+        # 1. Explicit allowlist.
+        #    These are opened via LoadLibrary by the HIP runtime at run
+        #    time and never appear in a PE import table, so the walk in
+        #    stage 2 cannot discover them. Keep this list.
+        # ---------------------------------------------------------------
+        $filesToCopy = @(
+          "amdhip64_*.dll",
+          "rocm_kpack.dll",
+          "amd_comgr*.dll",
+          "libhipblas.dll",
+          "rocblas.dll",
+          "rocsolver.dll",
+          "hipblaslt.dll",
+          "libhipblaslt.dll",
+          "hipblas.dll"
+        )
+
+        foreach ($pattern in $filesToCopy) {
+          $matchingFiles = Get-ChildItem -Path $rocmBinPath -Name $pattern -ErrorAction SilentlyContinue
+          if ($matchingFiles) {
+            foreach ($file in $matchingFiles) {
+              Copy-Item (Join-Path $rocmBinPath $file) (Join-Path $buildBinPath $file) -Force
+              Write-Host "Copied (allowlist): $file"
+            }
+          } else {
+            Write-Host "Warning: No files found matching pattern: $pattern"
+          }
+        }
+
+        # ---------------------------------------------------------------
+        # 2. Recursive PE import-table walk.
+        #    Resolves whatever the allowlist misses (origami.dll and any
+        #    future transitive dependency a ROCm nightly introduces).
+        # ---------------------------------------------------------------
+        if (-not (Test-Path $objdump)) {
+          Write-Host "::warning::llvm-objdump not found at $objdump - skipping dependency walk"
+        } else {
+          $processed = @{}
+          $missing   = @{}
+          $queue     = New-Object System.Collections.Queue
+
+          Get-ChildItem -Path $buildBinPath -File -Filter *.exe | ForEach-Object { $queue.Enqueue($_.FullName) }
+          Get-ChildItem -Path $buildBinPath -File -Filter *.dll | ForEach-Object { $queue.Enqueue($_.FullName) }
+
+          while ($queue.Count -gt 0) {
+            $file = $queue.Dequeue()
+            $key  = (Split-Path $file -Leaf).ToLower()
+            if ($processed.ContainsKey($key)) { continue }
+            $processed[$key] = $true
+
+            try {
+              $raw = & $objdump -p "$file" 2>&1
+            } catch {
+              Write-Host "::warning::llvm-objdump failed on $key - skipping"
+              continue
+            }
+
+            $deps = $raw |
+                    Select-String -Pattern 'DLL Name:\s*(\S+)' |
+                    ForEach-Object { $_.Matches[0].Groups[1].Value }
+
+            foreach ($dep in $deps) {
+              $src = Join-Path $rocmBinPath  $dep
+              $dst = Join-Path $buildBinPath $dep
+
+              if (-not (Test-Path $dst)) {
+                if (Test-Path $src) {
+                  Copy-Item $src $dst -Force
+                  Write-Host "Copied (dependency of $key): $dep"
+                } elseif (Test-Path (Join-Path $env:SystemRoot "System32\$dep")) {
+                  continue    # ships with Windows
+                } else {
+                  $missing[$dep.ToLower()] = $key
+                  continue
+                }
+              }
+              $queue.Enqueue($dst)
+            }
+          }
+
+          Write-Host "Dependency walk inspected $($processed.Count) binaries."
+          if ($missing.Count -gt 0) {
+            Write-Host "::warning::Unresolved imports (absent from ROCm bin and from System32):"
+            foreach ($m in $missing.Keys) {
+              Write-Host "::warning::  $m  (required by $($missing[$m]))"
+            }
+          } else {
+            Write-Host "All imports resolved."
+          }
+        }
+
+        # ---------------------------------------------------------------
+        # 3. Kernel/data directories.
+        #    Not PE imports, so stage 2 will never find them.
+        # ---------------------------------------------------------------
+        foreach ($lib in @("rocblas", "hipblaslt")) {
+          $srcLib = Join-Path $rocmBinPath "$lib\library"
+          if (Test-Path $srcLib) {
+            $dstLib = Join-Path $buildBinPath "$lib\library"
+            Write-Host "Copying $lib\library folder and all contents..."
+            New-Item -ItemType Directory -Force -Path (Split-Path $dstLib -Parent) | Out-Null
+            Copy-Item -Path $srcLib -Destination $dstLib -Recurse -Force
+            Write-Host "Copied: $lib\library"
+          } else {
+            Write-Host "Warning: $lib\library folder not found at: $srcLib"
+          }
+        }
+
+        Write-Host "ROCm core files successfully copied to build directory"
         
     - name: List build artifacts (including ROCm files)
       run: |
